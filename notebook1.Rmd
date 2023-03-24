@@ -1,0 +1,215 @@
+---
+title: "Applying Naïve Bayes classifier to sentiment classification of COVID tweets"
+output: html_notebook
+---
+
+#Problem 2: Applying Naïve Bayes classifier to sentiment classification of COVID tweets
+For this problem you are going to use corona_nlp_train.csv dataset, a collection of tweets pulled from Twitter and manually labeled as being “extremely positive”, “positive”, “neutral”, “negative”, and “extremely negative”.
+The dataset is from this Kaggle project (https://www.kaggle.com/kerneler/starter-covid-19-nlp-text-d3a3baa6- e/data ). I have attached the data to this assignment spec and you can directly download it from canvas.
+1. (1pt) Read the data and store in in the dataframe. Take a look at the structure of data and its variables. We will be working with only two variables: OriginalTweet and Sentiment. Original tweet is a text and Sentiment is a categorical variable with five levels: “extremely positive”, “positive”, “neutral”,
+“negative”, and “extremely negative”.
+Note: The original tweet variable has some accented character strings. Set fileEncoding="latin1" parameter inside the read.csv method to ensure those characters are read correctly.
+```{r}
+corona_df <- read.csv("corona_nlp_train.csv", fileEncoding = "latin1")
+
+str(corona_df)
+
+head(corona_df)
+
+```
+
+Randomize the order of rows
+```{R}
+corona_df <- corona_df[sample(nrow(corona_df)),]
+
+head(corona_df)
+
+#the resulting dataframe should have the same number of rows as the original dataset ,but with the rows in a random order
+```
+
+Convert sentiment into a factor variable with three levels: “positive, “neutral”, and “negative”. You can do this by labeling all “positive” and “extremely positive” tweets as “positive” and all “negative” and “extremely negative” tweets as “negative”.
+
+```{R}
+corona_df$Sentiment <- factor(ifelse(corona_df$Sentiment %in% c("Positive", "Extremely Positive"), "Positive",ifelse(corona_df$Sentiment %in% c("Negative", "Extremely Negative"), "Negative", "neutral")))
+
+```
+Now take the “summary” of sentiment to see how many observations/tweets you have for each label.
+```{R}
+summary(corona_df)
+```
+
+Create a text corpus from OriginalTweet variable. Then clean the corpus, that is convert all tweets to lowercase, stem and remove stop words, punctuations, and additional white spaces.
+```{R}
+install.packages(c("tm","SnowballC","stringr"))
+```
+
+
+```{R}
+library(tm)
+#The tm package is used to create a text corpus from the OriginalTweet variable in corona_df.
+library(SnowballC)
+library(stringr)
+
+# Create a text corpus from the OriginalTweet variable
+corpus <- Corpus(VectorSource(corona_df$OriginalTweet))
+
+#The Corpus() function is used to create the corpus, and the VectorSource() function is used to specify the source of the text data.
+
+
+# Clean the corpus by converting to lowercase, removing punctuation and white spaces, and stemming
+corpus <- tm_map(corpus, content_transformer(tolower)) # Convert to lowercase
+corpus <- tm_map(corpus, removePunctuation) # Remove punctuation
+corpus <- tm_map(corpus, removeNumbers) # Remove numbers
+corpus <- tm_map(corpus, removeWords, stopwords("english")) # Remove stop words
+corpus <- tm_map(corpus, stemDocument, language = "english") # Stemming
+ 
+# Convert the cleaned corpus back to a character vector
+clean_corpus <- str_replace_all(as.character(corpus), "\\s+", " ")
+
+
+```
+Create separate wordclouds for “positive” and “negative” tweets (set max.words=100 to only show the 100 most frequent words) Is there any visible difference between the frequent words in “positive” vs “negative” tweets?
+```{R}
+install.packages("wordcloud")
+
+```
+```{R}
+library(wordcloud)
+
+# Filter the corpus by sentiment
+positive_corpus <-  subset(clean_corpus,corona_df$Sentiment == "Positive")
+negative_corpus <- subset(clean_corpus,corona_df$Sentiment == "Negative")
+
+# Generate wordclouds for each sentiment
+set.seed(123) # For reproducibility
+positive_words <- termFreq(positive_corpus)
+positive_words <- head(sort(positive_words, decreasing = TRUE), 100)
+positive_sizes <- round(20 * sqrt(positive_words / max(positive_words)))
+wordcloud(words = names(positive_words), freq = positive_words, min.freq = 1,
+          max.words = 100, random.order = FALSE, rot.per = 0.35, 
+          colors = brewer.pal(8, "Dark2"), 
+          size = positive_sizes)
+
+# Generate a wordcloud for negative tweets
+negative_words <- termFreq(negative_corpus)
+negative_words <- head(sort(negative_words, decreasing = TRUE), 100)
+negative_sizes <- round(20 * sqrt(negative_words / max(negative_words)))
+negative_sizes[is.na(negative_sizes)] <- 1 #set missing values to 1
+wordcloud(words =names(negative_words), freq = negative_words, min.freq = 1,
+          max.words = 100, random.order = FALSE, rot.per = 0.35, 
+          colors = brewer.pal(8, "Dark2"), 
+          size = negative_sizes)
+```
+Create a document-term matrix from the cleaned corpus. Then split the data into train and test sets. Use 80% of samples (roughly 32925 rows ) for training and the rest for testing.
+```{R}
+install.packages("caTools")
+```
+```{R}
+clean_corpus<- as.data.frame(clean_corpus)
+names(clean_corpus)
+```
+```{R}
+# Load the necessary libraries
+library(tm)
+library(caTools)
+
+# Create a document-term matrix from the cleaned corpus
+dtm <- DocumentTermMatrix(clean_corpus)
+
+# Convert the document-term matrix to a sparse matrix
+dtm_sparse <- removeSparseTerms(dtm, 0.99)
+
+# Convert the sparse matrix to a data frame
+dtm_df <- as.data.frame(as.matrix(dtm_sparse))
+
+# Add the Sentiment variable to the data frame
+dtm_df$Sentiment <- clean_corpus$Sentiment
+dtm_df$sentiment <- as.factor(dtm_df$sentiment)
+# Split the data into train and test sets
+set.seed(123) # Set a seed for reproducibility
+split <- sample.split(dtm_df$Sentiment, SplitRatio = 0.8) # Split the data into 80% train and 20% test
+train_df <- subset(dtm_df, split == TRUE) # Subset the data for training
+test_df <- subset(dtm_df, split == FALSE) # Subset the data for testing
+
+# Print the dimensions of the train and test sets
+cat("Train set dimensions:", dim(train_df), "\n")
+cat("Test set dimensions:", dim(test_df), "\n")
+
+
+
+
+```
+
+Remove the words that appear less than 50 times in the training data. Convert frequencies in the document-term matrix to binary yes/no features.
+```{R}
+install.packages("quanteda")
+```
+```{R}
+library(quanteda)
+
+# create a document-feature matrix from the cleaned corpus
+dfm <- dfm(clean_corpus)
+
+# remove words that appear less than 50 times in the training data
+dfm <- dfm_trim(dfm, min_count = 50, verbose = FALSE)
+
+# convert frequencies to binary features
+dfm_bin <- dfm_binarize(dfm)
+
+
+```
+
+Train a Naïve Bayes classifier on the training data and evaluate its performance on the test data. Use a cross table between the model’s predictions on the test data and the true test labels.
+```{R}
+library(e1071)
+
+# Train Naïve Bayes classifier
+nb_classifier <- naiveBayes(x = train_dtm_binary, y = train_labels)
+
+# Make predictions on the test data
+test_predictions <- predict(nb_classifier, newdata = test_dtm_binary)
+
+# Evaluate performance with cross table
+table(test_predictions, test_labels)
+
+```
+
+```{R}
+# Calculate overall accuracy
+accuracy <- mean(test_predictions == test_labels)
+
+# Print accuracy
+cat("Overall accuracy:", round(accuracy * 100, 2), "%")
+
+```
+What is the precision and recall of the model in each category(negative, positive, neutral) ? precision and Recall are two popular metrics for measuring the performance of a classifier on each class and they are computed as follows:
+Precision = TP/(TP+FP) recall= TP/(TP+FN)
+Where TP is True Positive, FP is false positive and FN is false negative.
+
+```{R}
+
+library(caret)
+
+# Create confusion matrix
+cm <- confusionMatrix(test_predictions, test_labels, mode = "prec_recall")
+
+# Extract precision and recall for each sentiment category
+precision <- cm$byClass["Positive", "Precision":"Detection Rate"]
+recall <- cm$byClass["Positive", "Recall":"Balanced Accuracy"]
+
+# Print results
+cat("Positive Sentiment - Precision:", round(precision[1], 2), "\tRecall:", round(recall[1], 2), "\n")
+cat("Neutral Sentiment - Precision:", round(precision[2], 2), "\tRecall:", round(recall[2], 2), "\n")
+cat("Negative Sentiment - Precision:", round(precision[3], 2), "\tRecall:", round(recall[3], 2), "\n")
+
+
+
+
+```
+
+
+
+
+
+
+
